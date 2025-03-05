@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wikipedia Category Word Cloud</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/jasondavies/d3-cloud/build/d3.layout.cloud.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .input-group {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        input[type="text"] {
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 300px;
+        }
+        select {
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: white;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .visualization-container {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .frequencies-panel {
+            width: 200px;
+            padding: 15px;
+            background-color: white;
+            border-radius: 4px;
+            border: 2px solid #ff0000;
+        }
+        .frequencies-panel h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            color: #ff0000;
+            font-size: 16px;
+        }
+        .frequencies-list {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            height: 500px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .frequencies-list li {
+            display: flex;
+            justify-content: space-between;
+            padding: 3px 0;
+            color: #ff0000;
+        }
+        .frequencies-list li span:first-child {
+            margin-right: 10px;
+        }
+        .frequencies-list li:hover {
+            background-color: #fff0f0;
+        }
+        #wordcloud {
+            flex-grow: 1;
+            height: 600px;
+        }
+        #loading {
+            text-align: center;
+            display: none;
+            margin: 20px 0;
+        }
+        #error {
+            color: red;
+            text-align: center;
+            display: none;
+            margin: 20px 0;
+        }
+        .color-preview {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+        .color-box {
+            width: 30px;
+            height: 30px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Wikipedia Category Word Cloud</h1>
+        <div class="input-group">
+            <input type="text" id="category" placeholder="Enter Wikipedia category (e.g., Large_language_models)">
+            <select id="colorPalette" onchange="updateColorPreview()">
+                <option value="0" data-colors='["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b"]'>Default</option>
+                <option value="1" data-colors='["#ff69b4","#ffa07a","#ffff00","#00ff00","#0000ff","#4b0082"]'>Bright</option>
+                <option value="2" data-colors='["#800000","#008000","#000080","#808000","#800080","#008080"]'>Dark</option>
+            </select>
+            <button onclick="analyzeCategory()">Generate Word Cloud</button>
+        </div>
+        <div class="color-preview" id="colorPreview"></div>
+        <div id="loading">Loading...</div>
+        <div id="error"></div>
+        <div class="visualization-container">
+            <div class="frequencies-panel">
+                <h3>Raw Frequencies</h3>
+                <ul class="frequencies-list" id="frequenciesList"></ul>
+            </div>
+            <div id="wordcloud"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentPalette = [];
+
+        function updateColorPreview() {
+            const select = document.getElementById('colorPalette');
+            const option = select.options[select.selectedIndex];
+            currentPalette = JSON.parse(option.dataset.colors);
+            
+            const preview = document.getElementById('colorPreview');
+            preview.innerHTML = '';
+            currentPalette.forEach(color => {
+                const box = document.createElement('div');
+                box.className = 'color-box';
+                box.style.backgroundColor = color;
+                preview.appendChild(box);
+            });
+
+            // Regenerate word cloud if it exists
+            const wordcloudDiv = document.getElementById('wordcloud');
+            if (wordcloudDiv.innerHTML !== '') {
+                analyzeCategory();
+            }
+        }
+
+        function updateFrequenciesList(words) {
+            const list = document.getElementById('frequenciesList');
+            list.innerHTML = '';
+            words.sort((a, b) => b.size - a.size);  // Sort by frequency in descending order
+            words.forEach(word => {
+                const li = document.createElement('li');
+                li.innerHTML = `<span>${word.text}</span><span># ${word.size}</span>`;
+                list.appendChild(li);
+            });
+        }
+
+        function analyzeCategory() {
+            const category = document.getElementById('category').value;
+            if (!category) {
+                showError('Please enter a category name');
+                return;
+            }
+
+            showLoading(true);
+            showError('');
+
+            fetch('/analyze', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ category: category })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    showError(data.error);
+                } else {
+                    updateFrequenciesList(data);
+                    generateWordCloud(data);
+                }
+            })
+            .catch(error => {
+                showError('Error: ' + error.message);
+            })
+            .finally(() => {
+                showLoading(false);
+            });
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = message ? 'block' : 'none';
+        }
+
+        function generateWordCloud(words) {
+            // Clear previous word cloud
+            d3.select("#wordcloud").selectAll("*").remove();
+
+            const width = document.getElementById('wordcloud').offsetWidth;
+            const height = 600;
+
+            // Scale word sizes
+            const maxSize = Math.max(...words.map(w => w.size));
+            const minSize = Math.min(...words.map(w => w.size));
+            const fontSize = d3.scaleLog()
+                .domain([minSize, maxSize])
+                .range([12, 80]);
+
+            const layout = d3.layout.cloud()
+                .size([width, height])
+                .words(words)
+                .padding(5)
+                .rotate(() => (~~(Math.random() * 2) - 1) * 90)
+                .fontSize(d => fontSize(d.size))
+                .on("end", draw);
+
+            layout.start();
+
+            function draw(words) {
+                d3.select("#wordcloud")
+                    .append("svg")
+                    .attr("width", layout.size()[0])
+                    .attr("height", layout.size()[1])
+                    .append("g")
+                    .attr("transform", `translate(${layout.size()[0] / 2},${layout.size()[1] / 2})`)
+                    .selectAll("text")
+                    .data(words)
+                    .enter()
+                    .append("text")
+                    .style("font-size", d => `${fontSize(d.size)}px`)
+                    .style("font-family", "Arial")
+                    .style("fill", () => currentPalette[~~(Math.random() * currentPalette.length)])
+                    .attr("text-anchor", "middle")
+                    .attr("transform", d => `translate(${d.x},${d.y})rotate(${d.rotate})`)
+                    .text(d => d.text);
+            }
+        }
+
+        // Initialize color preview and default category
+        document.getElementById('category').value = 'Large_language_models';
+        updateColorPreview();
+        analyzeCategory();
+    </script>
+</body>
+</html>
